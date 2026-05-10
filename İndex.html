@@ -39,54 +39,79 @@
 
     .app-shell {
       display: grid;
-      grid-template-rows: 56px 1fr 68px;
+      grid-template-rows: 60px 1fr 70px;
       height: 100dvh;
       width: 100%;
       max-width: 500px;
       margin: 0 auto;
       background: white;
       position: relative;
+      box-shadow: 0 0 40px rgba(0,0,0,0.05);
     }
 
     .scroll-area { 
       overflow-y: auto; 
       -webkit-overflow-scrolling: touch; 
-      padding-bottom: 20px;
+      padding-bottom: calc(20px + env(safe-area-inset-bottom));
     }
     .no-scrollbar::-webkit-scrollbar { display: none; }
 
-    input, select, textarea { font-size: 16px !important; }
+    input, select, textarea { 
+      font-size: 16px !important; 
+      appearance: none;
+    }
 
     .icon-box {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 22px;
-      height: 22px;
+      width: 24px;
+      height: 24px;
+      pointer-events: none;
     }
 
     .tab-active { color: #4f46e5; position: relative; }
     .tab-active::after {
       content: '';
       position: absolute;
-      bottom: -6px; left: 50%;
+      bottom: -8px; left: 50%;
       transform: translateX(-50%);
-      width: 5px; height: 5px;
+      width: 6px; height: 6px;
       background: #4f46e5;
       border-radius: 50%;
     }
 
-    @media (max-width: 480px) {
-      html { font-size: 14px; }
-      .app-shell { grid-template-rows: 50px 1fr 64px; }
+    .bottom-sheet {
+      animation: slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
     }
 
     .animate-in {
-      animation: fadeIn 0.25s ease-out;
+      animation: fadeIn 0.15s ease-out;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: scale(0.98); }
+      from { opacity: 0; transform: scale(0.99); }
       to { opacity: 1; transform: scale(1); }
+    }
+
+    .btn-touch {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .active-tap:active {
+      background-color: #f1f5f9;
+      transform: scale(0.98);
+    }
+    
+    .no-scale:active {
+      transform: none !important;
     }
   </style>
 </head>
@@ -95,9 +120,9 @@
 <div id="root"></div>
 
 <script type="text/babel">
-  const { useState, useEffect, useMemo, useRef } = React;
+  const { useState, useEffect, useMemo, useRef, memo, useCallback } = React;
 
-  const Icon = ({ name, size = 20, className = "" }) => {
+  const Icon = memo(({ name, size = 20, className = "" }) => {
     const wrapperRef = useRef(null);
     useEffect(() => {
       if (window.lucide && wrapperRef.current) {
@@ -109,7 +134,13 @@
       }
     }, [name, size, className]);
     return <span ref={wrapperRef} className="icon-box"></span>;
-  };
+  });
+
+  const ListItem = memo(({ children, onClick, className = "", noScale = false }) => (
+    <div onClick={onClick} className={`p-5 rounded-2xl flex items-center justify-between border transition-all relative shadow-sm cursor-pointer bg-slate-50 border-slate-100 ${noScale ? 'no-scale' : 'active-tap'} ${className}`}>
+      {children}
+    </div>
+  ));
 
   const INITIAL_PRODUCTS = [
     { id: 1, name: 'ALM', stock: 0 },
@@ -118,52 +149,34 @@
     { id: 4, name: 'BARON', stock: 0 }
   ];
 
-  const INITIAL_VETS_LEGACY = ["Abdullah Yelekçi", "Adil Aygün", "Ahmet Arıcı", "Sinan Koç", "Yusuf Kara"];
-
   const normalizeName = (s) => (s || '').trim().toUpperCase();
-  const formatPhone = (s) => (s || '').trim();
   const uid = () => Date.now() + Math.floor(Math.random() * 1000);
 
   const App = () => {
     const [activeTab, setActiveTab] = useState('home');
     const [selectedVetId, setSelectedVetId] = useState(null);
     const [selectedProductId, setSelectedProductId] = useState(null);
-    
     const [showAddForm, setShowAddForm] = useState(false);
     const [showQuickAdd, setShowQuickAdd] = useState(null);
     const [vetSearch, setVetSearch] = useState('');
-    
+    const [bullSearch, setBullSearch] = useState(''); 
+    const [historySearch, setHistorySearch] = useState('');
     const [editingVetId, setEditingVetId] = useState(null);
     const [editVetName, setEditVetName] = useState('');
     const [editVetPhone, setEditVetPhone] = useState('');
-    const [editVetLimit, setEditVetLimit] = useState('');
-
     const [editingProductId, setEditingProductId] = useState(null);
     const [editProductName, setEditProductName] = useState('');
-
     const [openVetMenuId, setOpenVetMenuId] = useState(null);
     const [openProductMenuId, setOpenProductMenuId] = useState(null);
     const [openTransMenuId, setOpenTransMenuId] = useState(null);
     const [editingTransId, setEditingTransId] = useState(null);
-
     const [confirmDelete, setConfirmDelete] = useState({ open: false, type: '', id: null, message: '' });
 
     const fileInputRef = useRef(null);
 
-    const [vets, setVets] = useState(() => {
-      const stored = JSON.parse(localStorage.getItem('v_vets_v6'));
-      return stored || INITIAL_VETS_LEGACY.map(v => ({ id: uid(), name: normalizeName(v), phone: '', limit: 0 }));
-    });
-
-    const [products, setProducts] = useState(() => {
-      const stored = JSON.parse(localStorage.getItem('v_prods_v6'));
-      return stored || INITIAL_PRODUCTS;
-    });
-
-    const [transactions, setTransactions] = useState(() => {
-      const stored = JSON.parse(localStorage.getItem('v_trans_v6'));
-      return stored || [];
-    });
+    const [vets, setVets] = useState(() => JSON.parse(localStorage.getItem('v_vets_v6')) || []);
+    const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('v_prods_v6')) || INITIAL_PRODUCTS);
+    const [transactions, setTransactions] = useState(() => JSON.parse(localStorage.getItem('v_trans_v6')) || []);
 
     useEffect(() => {
       localStorage.setItem('v_vets_v6', JSON.stringify(vets));
@@ -172,68 +185,74 @@
     }, [vets, products, transactions]);
 
     useEffect(() => {
-      const onDoc = () => { setOpenVetMenuId(null); setOpenProductMenuId(null); setOpenTransMenuId(null); };
-      document.addEventListener('click', onDoc);
+      const onDoc = () => { 
+        setOpenVetMenuId(null); 
+        setOpenProductMenuId(null); 
+        setOpenTransMenuId(null); 
+      };
+      if (openVetMenuId || openProductMenuId || openTransMenuId) {
+        document.addEventListener('click', onDoc);
+      }
       return () => document.removeEventListener('click', onDoc);
-    }, []);
+    }, [openVetMenuId, openProductMenuId, openTransMenuId]);
 
     const [formVetId, setFormVetId] = useState('');
     const [formProduct, setFormProduct] = useState('');
     const [formQty, setFormQty] = useState('');
-    const [formType, setFormType] = useState('odeme');
+    const [formType, setFormType] = useState('borclanma'); 
     const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
-
     const [newNameInput, setNewNameInput] = useState('');
-    const [newPhoneInput, setNewPhoneInput] = useState('');
-    const [newLimitInput, setNewLimitInput] = useState('');
 
     const stats = useMemo(() => {
       const map = {};
+      let totalBalance = 0;
       vets.forEach(v => map[v.id] = { balance: 0 });
-      transactions.forEach(t => {
-        if (map[t.vetId]) map[t.vetId].balance += Number(t.qty);
-      });
-      return map;
+      for (let i = 0; i < transactions.length; i++) {
+        const t = transactions[i];
+        if (map[t.vetId]) {
+            const q = Number(t.qty);
+            map[t.vetId].balance += q;
+            totalBalance += q;
+        }
+      }
+      return { map, totalBalance };
     }, [transactions, vets]);
 
-    const selectedVet = useMemo(() => vets.find(v => v.id === selectedVetId) || null, [vets, selectedVetId]);
-    const selectedProduct = useMemo(() => products.find(p => p.id === selectedProductId) || null, [products, selectedProductId]);
+    const sortedVets = useMemo(() => [...vets].sort((a, b) => a.name.localeCompare(b.name, 'tr')), [vets]);
+    const sortedProductsList = useMemo(() => [...products].sort((a, b) => a.name.localeCompare(b.name, 'tr')), [products]);
 
-    const sortedVets = useMemo(() => {
-      return [...vets].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-    }, [vets]);
+    const filteredVets = useMemo(() => {
+      const s = normalizeName(vetSearch);
+      const res = s ? sortedVets.filter(v => normalizeName(v.name).includes(s)) : sortedVets;
+      return res.slice(0, 100);
+    }, [sortedVets, vetSearch]);
 
-    const sortedProductsList = useMemo(() => {
-      return [...products].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-    }, [products]);
+    const filteredBulls = useMemo(() => {
+      const s = normalizeName(bullSearch);
+      const res = s ? sortedProductsList.filter(p => normalizeName(p.name).includes(s)) : sortedProductsList;
+      return res.slice(0, 100);
+    }, [sortedProductsList, bullSearch]);
 
-    const getVetStats = (vId) => {
-      const vetTrans = transactions.filter(t => t.vetId == vId);
-      const balance = vetTrans.reduce((acc, t) => acc + Number(t.qty), 0);
-      const productBalances = {};
-      vetTrans.forEach(t => { productBalances[t.product] = (productBalances[t.product] || 0) + Number(t.qty); });
-      const items = Object.keys(productBalances).map(name => ({ name, balance: productBalances[name] })).filter(i => i.balance !== 0);
-      items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-      return { balance, history: [...vetTrans].reverse(), productBalances: items };
-    };
+    const filteredHistory = useMemo(() => {
+        const s = normalizeName(historySearch);
+        const list = [...transactions].reverse();
+        if (!s) return list.slice(0, 100);
+        return list.filter(t => {
+            const vName = vets.find(v => v.id == t.vetId)?.name || '';
+            return normalizeName(vName).includes(s) || normalizeName(t.product).includes(s);
+        }).slice(0, 100);
+    }, [transactions, historySearch, vets]);
 
-    const getProductStats = (prodName) => {
-      const prodTrans = transactions.filter(t => t.product === prodName);
-      const vetBalances = {};
-      prodTrans.forEach(t => { vetBalances[t.vetId] = (vetBalances[t.vetId] || 0) + Number(t.qty); });
-      const items = Object.keys(vetBalances).map(vId => ({ 
-        name: vets.find(v => v.id == vId)?.name || 'Bilinmeyen Müşteri', 
-        id: vId,
-        balance: vetBalances[vId] 
-      })).filter(i => i.balance !== 0);
-      items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-      return { history: [...prodTrans].reverse(), vetBalances: items };
-    };
+    const resetForm = useCallback(() => {
+      setFormVetId(''); setFormProduct(''); setFormQty('');
+      setFormType('borclanma'); setFormDate(new Date().toISOString().split('T')[0]);
+      setEditingTransId(null);
+    }, []);
 
-    const handleTransaction = () => {
+    const handleTransaction = useCallback(() => {
       if (!formVetId || !formProduct || !formQty) return;
       const qty = parseInt(formQty, 10);
-      const finalQty = formType === 'borclanma' ? qty : -qty;
+      const finalQty = formType === 'borclanma' ? -qty : qty;
       
       if (editingTransId) {
         const oldT = transactions.find(t => t.id === editingTransId);
@@ -248,122 +267,133 @@
       }
       setShowAddForm(false);
       resetForm();
-    };
+    }, [formVetId, formProduct, formQty, formType, formDate, editingTransId, transactions, products, resetForm]);
 
-    const resetForm = () => {
-      setFormVetId(''); setFormProduct(''); setFormQty('');
-      setFormType('odeme'); setFormDate(new Date().toISOString().split('T')[0]);
-      setEditingTransId(null);
-    };
-
-    const deleteTransaction = (id) => {
+    const deleteTransaction = useCallback((id) => {
       const t = transactions.find(x => x.id === id);
       if (!t) return;
       setProducts(products.map(p => p.name === t.product ? { ...p, stock: p.stock - Number(t.qty) } : p));
       setTransactions(transactions.filter(x => x.id !== id));
       setOpenTransMenuId(null);
-    };
+    }, [transactions, products]);
 
-    const openEditTransaction = (t) => {
+    const openEditTransaction = useCallback((t) => {
       setEditingTransId(t.id);
       setFormVetId(t.vetId);
       setFormProduct(t.product);
       setFormQty(Math.abs(t.qty).toString());
-      setFormType(t.qty > 0 ? 'borclanma' : 'odeme');
+      setFormType(t.type || (t.qty < 0 ? 'borclanma' : 'odeme'));
       setFormDate(t.date);
       setShowAddForm(true);
       setOpenTransMenuId(null);
-    };
+    }, []);
 
-    const handleBack = () => {
-      if (selectedVetId || selectedProductId) {
-        setSelectedVetId(null);
-        setSelectedProductId(null);
-      } else if (activeTab !== 'home') {
-        setActiveTab('home');
-      }
-    };
+    const getVetStats = useCallback((vId) => {
+      const vetTrans = transactions.filter(t => t.vetId == vId);
+      const balance = vetTrans.reduce((acc, t) => acc + Number(t.qty), 0);
+      const productBalances = {};
+      vetTrans.forEach(t => { productBalances[t.product] = (productBalances[t.product] || 0) + Number(t.qty); });
+      const items = Object.keys(productBalances).map(name => ({ name, balance: productBalances[name] })).filter(i => i.balance !== 0);
+      items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+      return { balance, history: [...vetTrans].reverse(), productBalances: items };
+    }, [transactions]);
 
-    // WHATSAPP PAYLAŞIM FONKSİYONU
-    const shareOnWhatsApp = () => {
-      if (!selectedVet) return;
-      const vetData = getVetStats(selectedVet.id);
-      const date = new Date().toLocaleDateString('tr-TR');
-      
-      let message = `*Borç Dökümü - ${selectedVet.name}*\n`;
-      message += `Tarih: ${date}\n\n`;
-      message += `*Ürün Detayları:*\n`;
-      
-      if (vetData.productBalances.length === 0) {
-        message += `Aktif borç kaydı bulunmamaktadır.\n`;
-      } else {
-        vetData.productBalances.forEach(item => {
-          message += `- ${item.name}: ${item.balance > 0 ? '+' : ''}${item.balance}\n`;
-        });
-      }
-      
-      message += `\n*Toplam Net Bakiye: ${vetData.balance > 0 ? '+' : ''}${vetData.balance}*`;
-      
-      const encodedText = encodeURIComponent(message);
-      const phone = selectedVet.phone ? selectedVet.phone.replace(/\D/g, '') : '';
-      
-      // WhatsApp URL oluşturma
-      const waUrl = phone 
-        ? `https://wa.me/${phone.startsWith('9') ? phone : '90' + phone}?text=${encodedText}` 
-        : `https://api.whatsapp.com/send?text=${encodedText}`;
-      
-      window.open(waUrl, '_blank');
+    const getProductStats = useCallback((prodName) => {
+      const prodTrans = transactions.filter(t => t.product === prodName);
+      const vetBalances = {};
+      prodTrans.forEach(t => { vetBalances[t.vetId] = (vetBalances[t.vetId] || 0) + Number(t.qty); });
+      const items = Object.keys(vetBalances).map(vId => ({ 
+        name: vets.find(v => v.id == vId)?.name || 'Bilinmeyen Veteriner', 
+        id: vId,
+        balance: vetBalances[vId] 
+      })).filter(i => i.balance !== 0);
+      items.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+      return { history: [...prodTrans].reverse(), vetBalances: items };
+    }, [transactions, vets]);
+
+    const handleShareVet = useCallback(() => {
+      if (!selectedVetId) return;
+      const v = vets.find(x => x.id === selectedVetId);
+      const vStats = getVetStats(selectedVetId);
+      let msg = `*${v.name}*\n\n*Boğa* | *Durum*\n-----------\n`;
+      vStats.productBalances.forEach(item => {
+        msg += `${item.name.padEnd(10)} ${item.balance > 0 ? '+' : ''}${item.balance}\n`;
+      });
+      msg += `\n*Toplam Bakiye:* ${vStats.balance > 0 ? '+' : ''}${vStats.balance}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    }, [selectedVetId, vets, getVetStats]);
+
+    const handleShareBullsStatus = useCallback(() => {
+      let msg = `*BOĞALAR SON DURUM*\n\n*Boğa* | *Durum*\n-----------\n`;
+      sortedProductsList.forEach(bull => {
+        msg += `${bull.name.padEnd(10)} ${bull.stock > 0 ? '+' : ''}${bull.stock}\n`;
+      });
+      msg += `\n_Tarih: ${new Date().toLocaleDateString('tr-TR')}_`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    }, [sortedProductsList]);
+
+    const handleBack = useCallback(() => {
+      if (selectedVetId || selectedProductId) { setSelectedVetId(null); setSelectedProductId(null); }
+      else if (activeTab !== 'home') { setActiveTab('home'); }
+    }, [selectedVetId, selectedProductId, activeTab]);
+
+    const selectedVetData = useMemo(() => vets.find(v => v.id === selectedVetId), [vets, selectedVetId]);
+    const selectedProductData = useMemo(() => products.find(p => p.id === selectedProductId), [products, selectedProductId]);
+
+    const handleMenuClick = (e) => {
+      e.stopPropagation();
+      if (e.nativeEvent) e.nativeEvent.stopImmediatePropagation();
     };
 
     return (
       <div className="app-shell">
-        <header className="bg-white px-4 flex items-center justify-between border-b border-slate-100 z-50">
-          <div className="flex items-center gap-2 overflow-hidden text-left">
+        <header className="bg-white px-5 flex items-center justify-between border-b border-slate-100 z-50">
+          <div className="flex items-center gap-3 overflow-hidden text-left">
             {(selectedVetId || selectedProductId || activeTab !== 'home') && (
-              <button onClick={handleBack} className="p-1.5 active:bg-slate-50 rounded-full">
-                <Icon name="chevron-left" size={22} className="text-slate-600" />
+              <button onClick={handleBack} className="p-2 active:bg-slate-100 rounded-full">
+                <Icon name="chevron-left" size={24} className="text-slate-700" />
               </button>
             )}
-            <h1 className="text-base font-bold text-slate-900 truncate">
-              {selectedVet ? selectedVet.name : (selectedProduct ? selectedProduct.name : (activeTab === 'settings' ? 'Ayarlar' : activeTab === 'vets' ? 'Müşteriler' : activeTab === 'stock' ? 'Ürünler' : activeTab === 'history' ? 'Geçmiş' : 'Borç Defteri'))}
+            <h1 className="text-lg font-extrabold text-slate-900 truncate tracking-tight">
+              {selectedVetData ? selectedVetData.name : (selectedProductData ? selectedProductData.name : (activeTab === 'settings' ? 'Ayarlar' : activeTab === 'vets' ? 'Veterinerler' : activeTab === 'stock' ? 'Boğalar' : activeTab === 'history' ? 'Geçmiş' : 'Borç Defteri'))}
             </h1>
           </div>
-          <button onClick={() => { setActiveTab('settings'); setSelectedVetId(null); setSelectedProductId(null); }} className={`p-2 ${activeTab === 'settings' ? 'text-indigo-600' : 'text-slate-400'}`}>
-            <Icon name="settings" size={18} />
-          </button>
+          <div className="flex items-center gap-1">
+             {selectedVetId && <button onClick={handleShareVet} className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl active-tap"><Icon name="share-2" size={20} /></button>}
+             {activeTab === 'stock' && !selectedProductId && products.length > 0 && <button onClick={handleShareBullsStatus} className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl active-tap"><Icon name="share-2" size={20} /></button>}
+             <button onClick={() => { setActiveTab('settings'); setSelectedVetId(null); setSelectedProductId(null); }} className={`p-2 rounded-xl ${activeTab === 'settings' ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400'}`}>
+               <Icon name="settings" size={22} />
+             </button>
+          </div>
         </header>
 
-        <main className="scroll-area no-scrollbar p-4 bg-white">
+        <main className="scroll-area no-scrollbar p-5 bg-white">
           {/* AYARLAR */}
           {activeTab === 'settings' && !selectedVetId && !selectedProductId && (
-            <div className="space-y-4 animate-in text-left">
-              <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-4 shadow-sm">
-                <h3 className="font-bold text-slate-800 text-sm">Veri Yönetimi</h3>
-                <div className="space-y-2">
+            <div className="space-y-4 animate-in">
+              <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 space-y-4">
+                <h3 className="font-bold text-slate-800 text-sm">Cihaz Verileri</h3>
+                <div className="grid grid-cols-1 gap-3">
                   <button onClick={() => {
-                      const data = { vets, products, transactions };
-                      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                      const blob = new Blob([JSON.stringify({ vets, products, transactions })], { type: 'application/json' });
                       const link = document.createElement('a');
                       link.href = URL.createObjectURL(blob);
-                      link.download = `borc_defteri_yedek.json`; link.click();
-                    }} className="w-full flex items-center justify-between p-4 bg-white rounded-xl border border-slate-200 font-bold text-indigo-600 text-xs text-left">
-                    <div className="flex items-center gap-3"><Icon name="download" size={18} /> Verileri Yedekle</div>
-                    <Icon name="chevron-right" size={14} />
+                      link.download = `yedek_${Date.now()}.json`; link.click();
+                    }} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 font-bold text-indigo-600 active-tap shadow-sm">
+                    <div className="flex items-center gap-3"><Icon name="download-cloud" size={20} /> Yedek Oluştur</div>
+                    <Icon name="chevron-right" size={16} />
                   </button>
-                  <button onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-between p-4 bg-white rounded-xl border border-slate-200 font-bold text-emerald-600 text-xs text-left">
-                    <div className="flex items-center gap-3"><Icon name="upload" size={18} /> Yedekten Geri Yükle</div>
-                    <Icon name="chevron-right" size={14} />
+                  <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 font-bold text-emerald-600 active-tap shadow-sm">
+                    <div className="flex items-center gap-3"><Icon name="refresh-ccw" size={20} /> Yedekten Yükle</div>
+                    <Icon name="chevron-right" size={16} />
                   </button>
                   <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={(e) => {
                     const reader = new FileReader();
                     reader.onload = (ev) => {
                       try {
                         const c = JSON.parse(ev.target.result);
-                        if (c.vets && c.products) { 
-                          setVets(c.vets); setProducts(c.products); setTransactions(c.transactions || []); 
-                          setConfirmDelete({ open: true, type: 'alert', message: "Veriler yüklendi!", onConfirm: null });
-                        }
-                      } catch(err) { alert("Dosya hatalı!"); }
+                        if (c.vets) { setVets(c.vets); setProducts(c.products); setTransactions(c.transactions || []); setConfirmDelete({ open: true, type: 'alert', message: "Veriler yüklendi!" }); }
+                      } catch(err) { alert("Hatalı dosya!"); }
                     };
                     if(e.target.files[0]) reader.readAsText(e.target.files[0]);
                   }} />
@@ -372,118 +402,81 @@
             </div>
           )}
 
-          {/* MÜŞTERİ DETAY */}
-          {selectedVet && (
-            <div className="space-y-5 animate-in">
-              <div className="p-6 bg-indigo-600 rounded-3xl text-center text-white shadow-lg relative">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-left overflow-hidden">
-                    <h2 className="text-xl font-extrabold truncate uppercase">{selectedVet.name}</h2>
-                    {(selectedVet.phone || (selectedVet.limit > 0)) && (
-                      <p className="text-[11px] font-medium opacity-80 truncate">
-                        {selectedVet.phone && `${selectedVet.phone}`}
-                        {selectedVet.phone && selectedVet.limit > 0 && " • "}
-                        {selectedVet.limit > 0 && `Limit: ${selectedVet.limit}`}
-                      </p>
-                    )}
+          {/* VETERİNER DETAY */}
+          {selectedVetId && (
+            <div className="space-y-6 animate-in">
+              <div className="p-7 bg-indigo-600 rounded-[2.5rem] text-center text-white shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-10"><Icon name="user" size={100} /></div>
+                <div className="flex items-center justify-between mb-6 relative z-10 text-left">
+                  <div className="overflow-hidden">
+                    <h2 className="text-2xl font-black truncate uppercase leading-tight">{selectedVetData?.name}</h2>
+                    {selectedVetData?.phone && <p className="text-xs font-medium opacity-80 mt-1">{selectedVetData.phone}</p>}
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    {/* WHATSAPP PAYLAŞ BUTONU */}
-                    <button 
-                      onClick={shareOnWhatsApp} 
-                      className="p-2.5 bg-emerald-500 rounded-xl hover:bg-emerald-600 transition"
-                      title="WhatsApp ile Paylaş"
-                    >
-                      <Icon name="share-2" size={18} className="text-white" />
-                    </button>
-                    <button onClick={() => { setEditingVetId(selectedVet.id); setEditVetName(selectedVet.name); setEditVetPhone(selectedVet.phone); setEditVetLimit(selectedVet.limit); }} className="p-2.5 bg-white/20 rounded-xl">
-                      <Icon name="edit-3" size={18} className="text-white" />
-                    </button>
-                  </div>
+                  <button onClick={() => { setEditingVetId(selectedVetId); setEditVetName(selectedVetData.name); setEditVetPhone(selectedVetData.phone); }} className="p-3 bg-white/20 rounded-2xl active-tap shrink-0">
+                    <Icon name="pencil" size={20} className="text-white" />
+                  </button>
                 </div>
-                <div className="py-2">
-                  <p className="text-[10px] font-bold opacity-60 uppercase tracking-widest">NET BAKİYE</p>
-                  <p className="text-5xl font-black mt-1">{stats[selectedVet.id]?.balance > 0 ? `+${stats[selectedVet.id].balance}` : (stats[selectedVet.id]?.balance || 0)}</p>
+                <div className="py-2 relative z-10">
+                  <p className="text-[11px] font-bold opacity-60 uppercase tracking-[0.2em]">CARİ BAKİYE</p>
+                  <p className="text-6xl font-black mt-2 tracking-tighter">
+                    {stats.map[selectedVetId]?.balance > 0 ? `+${stats.map[selectedVetId].balance}` : (stats.map[selectedVetId]?.balance || 0)}
+                  </p>
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1 text-left">Ürün Dağılımı</h3>
-                {getVetStats(selectedVet.id).productBalances.length === 0 ? (
-                    <p className="p-4 bg-slate-50 rounded-xl text-slate-400 text-xs text-center font-bold italic">Müşteriye ait aktif ürün borcu bulunmuyor.</p>
-                ) : getVetStats(selectedVet.id).productBalances.map(item => (
-                  <div key={item.name} className="flex justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl shadow-sm">
-                    <span className="font-bold text-slate-700 text-sm uppercase">{item.name}</span>
-                    <span className={`font-black text-sm ${item.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{item.balance > 0 ? `+${item.balance}` : item.balance}</span>
+              <div className="space-y-3">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-2 text-left">Boğa Bazlı Borç</h3>
+                {getVetStats(selectedVetId).productBalances.length === 0 ? (
+                    <div className="p-10 bg-slate-50 rounded-3xl border border-dashed border-slate-200 text-center"><p className="text-xs font-bold text-slate-400">Aktif borç yok.</p></div>
+                ) : getVetStats(selectedVetId).productBalances.map(item => (
+                  <div key={item.name} className="flex justify-between items-center p-5 bg-slate-50 border border-slate-100 rounded-2xl shadow-sm animate-in">
+                    <span className="font-extrabold text-slate-800 text-sm uppercase">{item.name}</span>
+                    <span className={`font-black text-base ${item.balance < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{item.balance > 0 ? `+${item.balance}` : item.balance}</span>
                   </div>
                 ))}
               </div>
-
-              <div className="space-y-2">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1 text-left">Geçmiş</h3>
-                {getVetStats(selectedVet.id).history.map(t => (
-                  <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between shadow-sm text-left">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-1.5 rounded-lg shrink-0 ${t.qty > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                        <Icon name={t.qty > 0 ? "arrow-up-right" : "arrow-down-left"} size={16} />
+              <div className="space-y-3">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-2 text-left">Hareket Geçmişi</h3>
+                {getVetStats(selectedVetId).history.slice(0, 50).map(t => (
+                  <div key={t.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm animate-in">
+                    <div className="flex items-center gap-4 text-left">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${t.qty < 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                        <Icon name={t.qty < 0 ? "minus" : "plus"} size={18} />
                       </div>
-                      <div className="text-left truncate">
-                        <p className="text-xs font-bold text-slate-800 truncate uppercase">{t.product}</p>
+                      <div className="truncate">
+                        <p className="text-sm font-bold text-slate-800 uppercase leading-none mb-1 truncate">{t.product}</p>
                         <p className="text-[10px] text-slate-400 font-bold">{t.date}</p>
                       </div>
                     </div>
-                    <span className={`font-black text-sm shrink-0 ml-2 ${t.qty > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{t.qty > 0 ? `+${t.qty}` : t.qty}</span>
+                    <span className={`font-black text-base ${t.qty < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{t.qty > 0 ? `+${t.qty}` : t.qty}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ÜRÜN DETAY */}
-          {selectedProduct && (
-            <div className="space-y-5 animate-in text-left">
-              <div className="p-6 bg-slate-900 rounded-3xl text-center text-white shadow-lg relative">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-left">
-                    <h2 className="text-xl font-extrabold uppercase">{selectedProduct.name}</h2>
-                    <p className="text-[11px] font-medium opacity-80 uppercase tracking-tighter">Dışarıdaki Toplam Ürün</p>
+          {/* BOĞA DETAY */}
+          {selectedProductId && (
+            <div className="space-y-6 animate-in">
+              <div className="p-7 bg-slate-900 rounded-[2.5rem] text-center text-white shadow-xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-6 relative z-10 text-left">
+                  <div className="overflow-hidden">
+                    <h2 className="text-2xl font-black uppercase tracking-tight leading-tight">{selectedProductData?.name}</h2>
+                    <p className="text-[11px] font-bold opacity-50 uppercase tracking-wider mt-1">Dışarıdaki Toplam</p>
                   </div>
-                  <button onClick={() => { setEditingProductId(selectedProduct.id); setEditProductName(selectedProduct.name); }} className="p-2.5 bg-white/20 rounded-xl">
-                    <Icon name="edit-3" size={18} className="text-white" />
+                  <button onClick={() => { setEditingProductId(selectedProductId); setEditProductName(selectedProductData.name); }} className="p-3 bg-white/10 rounded-2xl active-tap shrink-0">
+                    <Icon name="pencil" size={20} className="text-white" />
                   </button>
                 </div>
-                <div className="py-2 text-center">
-                  <p className="text-[10px] font-bold opacity-60 uppercase tracking-widest text-indigo-400">TOPLAM BORÇTAKİ</p>
-                  <p className="text-5xl font-black mt-1 text-white">{selectedProduct.stock}</p>
-                </div>
+                <div className="py-2 text-center relative z-10"><p className="text-6xl font-black mt-2 text-white tracking-tighter">{selectedProductData?.stock}</p></div>
               </div>
-              
-              <div className="space-y-2">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Müşteri Dağılımı</h3>
-                {getProductStats(selectedProduct.name).vetBalances.length === 0 ? (
-                   <p className="p-4 bg-slate-50 rounded-xl text-slate-400 text-xs text-center font-bold italic">Borç kaydı bulunamadı.</p>
-                ) : getProductStats(selectedProduct.name).vetBalances.map(item => (
-                  <div key={item.id} onClick={() => { setSelectedProductId(null); setSelectedVetId(item.id); }} className="flex justify-between p-4 bg-slate-50 border border-slate-100 rounded-2xl active:bg-slate-100 shadow-sm">
-                    <span className="font-bold text-slate-700 text-sm truncate uppercase">{item.name}</span>
-                    <span className={`font-black text-sm ${item.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{item.balance > 0 ? `+${item.balance}` : item.balance}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-2">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Ürün Hareketleri</h3>
-                {getProductStats(selectedProduct.name).history.map(t => (
-                  <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-100 flex items-center justify-between shadow-sm">
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <div className={`p-1.5 rounded-lg shrink-0 ${t.qty > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                        <Icon name={t.qty > 0 ? "arrow-up-right" : "arrow-down-left"} size={16} />
-                      </div>
-                      <div className="text-left truncate">
-                        <p className="text-xs font-bold text-slate-800 truncate uppercase">{vets.find(v => v.id == t.vetId)?.name || 'Bilinmeyen'}</p>
-                        <p className="text-[10px] text-slate-400 font-bold">{t.date}</p>
-                      </div>
-                    </div>
-                    <span className={`font-black text-sm shrink-0 ml-2 ${t.qty > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{t.qty > 0 ? `+${t.qty}` : t.qty}</span>
+              <div className="space-y-3">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest px-2 text-left">Veteriner Dağılımı</h3>
+                {getProductStats(selectedProductData?.name).vetBalances.length === 0 ? (
+                   <p className="p-10 bg-slate-50 rounded-3xl text-slate-400 text-xs text-center font-bold border border-dashed">Kayıt yok.</p>
+                ) : getProductStats(selectedProductData.name).vetBalances.map(item => (
+                  <div key={item.id} onClick={() => { setSelectedProductId(null); setSelectedVetId(item.id); setActiveTab('vets'); }} className="flex justify-between items-center p-5 bg-slate-50 border border-slate-100 rounded-2xl active-tap shadow-sm animate-in">
+                    <span className="font-extrabold text-slate-800 text-sm truncate uppercase text-left">{item.name}</span>
+                    <span className={`font-black text-base ${item.balance < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{item.balance > 0 ? `+${item.balance}` : item.balance}</span>
                   </div>
                 ))}
               </div>
@@ -492,258 +485,287 @@
 
           {/* ANA SAYFA */}
           {activeTab === 'home' && !selectedVetId && !selectedProductId && (
-            <div className="space-y-4 animate-in">
-              <div className="grid grid-cols-2 gap-3 text-left">
-                <div onClick={() => setActiveTab('stock')} className="p-4 bg-slate-900 rounded-2xl text-white shadow-sm active:scale-95 transition">
-                  <Icon name="package" className="opacity-40 mb-1" size={18} />
-                  <p className="text-[10px] font-bold opacity-60 uppercase tracking-wider">ÜRÜN</p>
-                  <p className="text-xl font-black">{products.reduce((a, b) => a + Number(b.stock), 0)}</p>
+            <div className="space-y-5 animate-in">
+              <div className="flex items-center justify-between p-5 bg-indigo-600 rounded-3xl text-white shadow-lg overflow-hidden relative">
+                <div className="relative z-10 text-left">
+                  <p className="text-[10px] font-black opacity-60 uppercase tracking-widest">TOPLAM ALACAK</p>
+                  <p className="text-3xl font-black mt-0.5 tracking-tight">{stats.totalBalance > 0 ? `+${stats.totalBalance}` : stats.totalBalance}</p>
                 </div>
-                <div onClick={() => setActiveTab('vets')} className="p-4 bg-indigo-600 rounded-2xl text-white shadow-sm active:scale-95 transition text-center">
-                  <Icon name="users" className="opacity-40 mb-1" size={18} />
-                  <p className="text-[10px] font-bold opacity-60 uppercase tracking-wider">MÜŞTERİ</p>
+                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center relative z-10"><Icon name="trending-up" className="text-white" size={24} /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div onClick={() => setActiveTab('stock')} className="p-5 bg-slate-900 rounded-3xl text-white shadow-lg active-tap overflow-hidden relative text-left">
+                  <div className="absolute -bottom-2 -right-2 opacity-10"><Icon name="package" size={50} /></div>
+                  <p className="text-[10px] font-bold opacity-60 uppercase tracking-widest mb-1">BOĞALAR</p>
+                  <p className="text-xl font-black">{products.length}</p>
+                </div>
+                <div onClick={() => setActiveTab('vets')} className="p-5 bg-white border border-slate-100 rounded-3xl text-slate-800 shadow-sm active-tap overflow-hidden relative text-left">
+                  <div className="absolute -bottom-2 -right-2 opacity-5 text-indigo-600"><Icon name="users" size={50} /></div>
+                  <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest mb-1 text-slate-500">VETERİNERLER</p>
                   <p className="text-xl font-black">{vets.length}</p>
                 </div>
               </div>
-              <button onClick={() => { resetForm(); setShowAddForm(true); }} className="w-full bg-indigo-600 text-white p-5 rounded-2xl flex items-center justify-center gap-2 font-bold shadow-lg active:scale-[0.98] transition uppercase tracking-tight">
-                <Icon name="plus-circle" size={20} /> Yeni İşlem Gir
-              </button>
+              <button onClick={() => { resetForm(); setShowAddForm(true); }} className="w-full bg-indigo-600 text-white p-5 rounded-3xl flex items-center justify-center gap-3 font-black shadow-xl shadow-indigo-100 active:scale-[0.98] transition-all uppercase tracking-wider text-sm btn-touch"><Icon name="plus-circle" size={22} /> Yeni İşlem Gir</button>
             </div>
           )}
 
-          {/* ÜRÜNLER LİSTESİ */}
+          {/* BOĞALAR LİSTESİ */}
           {activeTab === 'stock' && !selectedProductId && (
-            <div className="space-y-2 animate-in text-left">
-              <button onClick={() => setShowQuickAdd('product')} className="w-full p-3 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold text-xs mb-2 active:bg-slate-50">+ Yeni Ürün Ekle</button>
-              {sortedProductsList.map(p => (
-                <div key={p.id} onClick={() => setSelectedProductId(p.id)} className="p-4 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-100 active:bg-slate-100 relative shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-800 text-white flex items-center justify-center font-bold text-[10px] uppercase tracking-tighter">{p.name[0]}</div>
-                    <p className="font-bold text-slate-700 text-sm uppercase">{p.name}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <p className="font-black text-indigo-600">{p.stock}</p>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenProductMenuId(openProductMenuId === p.id ? null : p.id); }} className="p-1">
-                      <Icon name="more-vertical" size={16} className="text-slate-400" />
-                    </button>
-                  </div>
-                  {openProductMenuId === p.id && (
-                    <div className="absolute right-8 top-10 w-36 bg-white border border-slate-100 rounded-xl shadow-xl z-50 overflow-hidden animate-in" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => { setEditingProductId(p.id); setEditProductName(p.name); }} className="w-full p-3 text-left text-[11px] font-bold border-b flex items-center gap-2 active:bg-slate-50"><Icon name="edit" size={14}/> Düzenle</button>
-                      <button onClick={() => {
-                        if (p.stock !== 0) { setConfirmDelete({ open:true, type:'alert', message:'Dışarıda bakiyesi olan ürün silinemez.' }); return; }
-                        setConfirmDelete({ open: true, type: 'product', id: p.id, message: `${p.name} ürününü silmek istediğinize emin misiniz?`, onConfirm: () => setProducts(products.filter(x => x.id !== p.id)) });
-                      }} className="w-full p-3 text-left text-[11px] font-bold text-rose-500 flex items-center gap-2 active:bg-rose-50"><Icon name="trash" size={14}/> Sil</button>
+            <div className="space-y-3 animate-in">
+              <div className="flex gap-2 mb-2">
+                <input value={bullSearch} onChange={e => setBullSearch(e.target.value)} placeholder="Boğa ara..." className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-sm outline-none border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner" />
+                <button onClick={() => setShowQuickAdd('product')} className="w-14 bg-slate-900 text-white rounded-2xl active:scale-90 transition-transform shrink-0 shadow-lg flex items-center justify-center"><Icon name="plus" size={22} /></button>
+              </div>
+              {products.length === 0 ? (<div className="text-center p-16 text-slate-300"><Icon name="package-search" size={48} className="mx-auto opacity-20" /><p className="text-xs font-bold uppercase tracking-widest">Boğa yok</p></div>) : 
+                filteredBulls.map(p => (
+                  <ListItem key={p.id} onClick={() => setSelectedProductId(p.id)} noScale={openProductMenuId === p.id}>
+                    <div className="flex items-center gap-4 text-left">
+                      <div className="w-10 h-10 rounded-xl bg-slate-800 text-white flex items-center justify-center font-bold text-xs uppercase shadow-sm">{p.name[0]}</div>
+                      <p className="font-extrabold text-slate-700 text-sm uppercase truncate">{p.name}</p>
                     </div>
-                  )}
-                </div>
-              ))}
+                    <div className="flex items-center gap-3">
+                      <p className="font-black text-lg text-indigo-600">{p.stock}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setOpenProductMenuId(p.id); }} className="p-2 active:bg-slate-200 rounded-full"><Icon name="more-vertical" size={20} className="text-slate-400" /></button>
+                    </div>
+                    {openProductMenuId === p.id && (
+                      <div className="absolute right-12 top-12 w-40 bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in" onClick={handleMenuClick}>
+                        <button onClick={() => { setEditingProductId(p.id); setEditProductName(p.name); }} className="w-full p-4 text-left text-xs font-bold border-b flex items-center gap-3 active:bg-slate-50 transition-colors"><Icon name="pencil" size={16}/> Düzenle</button>
+                        <button onClick={() => {
+                          if (p.stock !== 0) { setConfirmDelete({ open:true, type:'alert', message:'Miktarı 0 olmayan silinemez.' }); return; }
+                          setConfirmDelete({ open: true, type: 'product', id: p.id, message: `${p.name} silinecek?`, onConfirm: () => setProducts(products.filter(x => x.id !== p.id)) });
+                        }} className="w-full p-4 text-left text-xs font-bold text-rose-500 flex items-center gap-3 active:bg-rose-50 transition-colors"><Icon name="trash-2" size={16}/> Sil</button>
+                      </div>
+                    )}
+                  </ListItem>
+                ))
+              }
             </div>
           )}
 
-          {/* MÜŞTERİ LİSTESİ */}
+          {/* VETERİNER LİSTESİ */}
           {activeTab === 'vets' && !selectedVetId && (
-            <div className="space-y-2 animate-in text-left">
-              <div className="flex gap-2 mb-3">
-                <input value={vetSearch} onChange={e => setVetSearch(e.target.value)} placeholder="Müşteri ara..." className="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-sm outline-none" />
-                <button onClick={() => setShowQuickAdd('vet')} className="px-4 bg-slate-900 text-white rounded-xl active:scale-90 transition shrink-0"><Icon name="user-plus" size={18} /></button>
+            <div className="space-y-3 animate-in">
+              <div className="flex gap-2 mb-4">
+                <input value={vetSearch} onChange={e => setVetSearch(e.target.value)} placeholder="Veteriner ara..." className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-sm outline-none border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner" />
+                <button onClick={() => setShowQuickAdd('vet')} className="w-14 bg-slate-900 text-white rounded-2xl active:scale-90 transition-transform shrink-0 shadow-lg flex items-center justify-center"><Icon name="user-plus" size={22} /></button>
               </div>
-              {sortedVets.filter(v => normalizeName(v.name).includes(normalizeName(vetSearch))).map(v => (
-                <div key={v.id} onClick={() => setSelectedVetId(v.id)} className="p-4 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-100 active:bg-slate-100 relative shadow-sm">
-                  <div className="flex items-center gap-3 truncate">
-                    <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-xs uppercase shrink-0">{v.name[0]}</div>
-                    <div className="truncate text-left">
-                        <p className="font-bold text-slate-700 text-sm truncate uppercase">{v.name}</p>
-                        {v.phone && <p className="text-[10px] font-bold text-slate-400 truncate">{v.phone}</p>}
+              {vets.length === 0 ? (<div className="text-center p-16 text-slate-300"><Icon name="user-x" size={48} className="mx-auto opacity-20" /><p className="text-xs font-bold uppercase tracking-widest">Veteriner yok</p></div>) : 
+                filteredVets.map(v => (
+                  <ListItem key={v.id} onClick={() => setSelectedVetId(v.id)} noScale={openVetMenuId === v.id}>
+                    <div className="flex items-center gap-4 truncate text-left">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center font-black text-sm uppercase shrink-0 shadow-sm">{v.name[0]}</div>
+                      <div className="truncate">
+                          <p className="font-extrabold text-slate-800 text-sm truncate uppercase leading-tight">{v.name}</p>
+                          {v.phone && <p className="text-[10px] font-bold text-slate-400 truncate mt-0.5">{v.phone}</p>}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-1">
-                    <p className={`font-black ${stats[v.id]?.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                      {stats[v.id]?.balance > 0 ? `+${stats[v.id].balance}` : stats[v.id]?.balance}
-                    </p>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenVetMenuId(openVetMenuId === v.id ? null : v.id); }} className="p-1">
-                      <Icon name="more-vertical" size={16} className="text-slate-400" />
-                    </button>
-                  </div>
-                  {openVetMenuId === v.id && (
-                    <div className="absolute right-8 top-10 w-36 bg-white border border-slate-100 rounded-xl shadow-xl z-50 overflow-hidden animate-in" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => { setEditingVetId(v.id); setEditVetName(v.name); setEditVetPhone(v.phone); setEditVetLimit(v.limit); }} className="w-full p-3 text-left text-[11px] font-bold border-b flex items-center gap-2 active:bg-slate-50"><Icon name="edit" size={14}/> Düzenle</button>
-                      <button onClick={() => {
-                          if (stats[v.id]?.balance !== 0) { setConfirmDelete({ open:true, type:'alert', message:'Bakiyesi olan müşteri silinemez.' }); return; }
-                          setConfirmDelete({ 
-                            open: true, type: 'vet', id: v.id, 
-                            message: `${v.name} müşterisini silmek istediğine emin misin?`,
-                            onConfirm: () => { setVets(vets.filter(x => x.id !== v.id)); setTransactions(transactions.filter(t => t.vetId == v.id)); }
-                          });
-                      }} className="w-full p-3 text-left text-[11px] font-bold text-rose-500 flex items-center gap-2 active:bg-rose-50"><Icon name="trash" size={14}/> Sil</button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className={`font-black text-base ${stats.map[v.id]?.balance < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{stats.map[v.id]?.balance > 0 ? `+${stats.map[v.id].balance}` : stats.map[v.id]?.balance}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setOpenVetMenuId(v.id); }} className="p-2 active:bg-slate-200 rounded-full"><Icon name="more-vertical" size={20} className="text-slate-400" /></button>
                     </div>
-                  )}
-                </div>
-              ))}
+                    {openVetMenuId === v.id && (
+                      <div className="absolute right-12 top-12 w-40 bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in" onClick={handleMenuClick}>
+                        <button onClick={() => { setEditingVetId(v.id); setEditVetName(v.name); setEditVetPhone(v.phone); }} className="w-full p-4 text-left text-xs font-bold border-b flex items-center gap-3 active:bg-slate-50 transition-colors"><Icon name="pencil" size={16}/> Düzenle</button>
+                        <button onClick={() => {
+                            if (stats.map[v.id]?.balance !== 0) { setConfirmDelete({ open:true, type:'alert', message:'Bakiyesi olan veteriner silinemez.' }); return; }
+                            setConfirmDelete({ open: true, type: 'vet', id: v.id, message: `${v.name} silinecek?`, onConfirm: () => { setVets(vets.filter(x => x.id !== v.id)); setTransactions(transactions.filter(t => t.vetId !== v.id)); } });
+                        }} className="w-full p-4 text-left text-xs font-bold text-rose-500 flex items-center gap-3 active:bg-rose-50 transition-colors"><Icon name="trash-2" size={16}/> Sil</button>
+                      </div>
+                    )}
+                  </ListItem>
+                ))
+              }
             </div>
           )}
 
           {/* GEÇMİŞ TAB */}
           {activeTab === 'history' && (
-            <div className="space-y-2 animate-in text-left">
-              {transactions.slice().reverse().map(t => (
-                <div key={t.id} className="p-3 bg-white border border-slate-100 rounded-xl flex items-center justify-between shadow-sm relative text-left">
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <div className={`p-1.5 rounded-lg shrink-0 ${t.qty > 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                      <Icon name={t.qty > 0 ? "arrow-up-right" : "arrow-down-left"} size={16} />
+            <div className="space-y-3 animate-in">
+              <div className="mb-4">
+                <input value={historySearch} onChange={e => setHistorySearch(e.target.value)} placeholder="Veteriner veya boğa ara..." className="w-full p-4 bg-slate-100 rounded-2xl font-bold text-sm outline-none border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner" />
+              </div>
+              {filteredHistory.length === 0 ? (<div className="text-center p-16 text-slate-300"><Icon name="clipboard-list" size={48} className="mx-auto opacity-20" /><p className="text-xs font-bold uppercase tracking-widest">İşlem yok</p></div>) : 
+                filteredHistory.map(t => (
+                  <div key={t.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center justify-between shadow-sm relative animate-in">
+                    <div className="flex items-center gap-4 overflow-hidden text-left">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${t.qty < 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}><Icon name={t.qty < 0 ? "minus" : "plus"} size={18} /></div>
+                      <div className="truncate">
+                        <p className="text-sm font-extrabold text-slate-800 truncate uppercase leading-none mb-1">{vets.find(v => v.id == t.vetId)?.name || '??'}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase truncate tracking-tight">{t.product} • {t.date}</p>
+                      </div>
                     </div>
-                    <div className="truncate">
-                      <p className="text-xs font-bold text-slate-800 truncate uppercase">{vets.find(v => v.id == t.vetId)?.name || 'Bilinmeyen'}</p>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase truncate">{t.product} • {t.date}</p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className={`text-base font-black ${t.qty < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{t.qty > 0 ? `+${t.qty}` : t.qty}</p>
+                      <button onClick={(e) => { e.stopPropagation(); setOpenTransMenuId(t.id); }} className="p-2 active:bg-slate-100 rounded-full transition-colors"><Icon name="more-vertical" size={20} className="text-slate-400" /></button>
                     </div>
+                    {openTransMenuId === t.id && (
+                      <div className="absolute right-12 top-12 w-40 bg-white border border-slate-100 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in" onClick={handleMenuClick}>
+                        <button onClick={() => openEditTransaction(t)} className="w-full p-4 text-left text-xs font-bold border-b flex items-center gap-3 active:bg-slate-50 transition-colors"><Icon name="pencil" size={16}/> Düzenle</button>
+                        <button onClick={() => setConfirmDelete({ open: true, type: 'trans', id: t.id, message: "Silinsin mi?", onConfirm: () => deleteTransaction(t.id) })} className="w-full p-4 text-left text-xs font-bold text-rose-500 flex items-center gap-3 active:bg-rose-50 transition-colors"><Icon name="trash-2" size={16}/> Sil</button>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <p className={`text-sm font-black ${t.qty > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{t.qty > 0 ? `+${t.qty}` : t.qty}</p>
-                    <button onClick={(e) => { e.stopPropagation(); setOpenTransMenuId(openTransMenuId === t.id ? null : t.id); }} className="p-1">
-                      <Icon name="more-vertical" size={16} className="text-slate-400" />
-                    </button>
-                  </div>
-                  {openTransMenuId === t.id && (
-                    <div className="absolute right-8 top-10 w-36 bg-white border border-slate-100 rounded-xl shadow-xl z-50 overflow-hidden animate-in" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => openEditTransaction(t)} className="w-full p-3 text-left text-[11px] font-bold border-b flex items-center gap-2 active:bg-slate-50"><Icon name="edit" size={14}/> Düzenle</button>
-                      <button onClick={() => {
-                        setConfirmDelete({ open: true, type: 'trans', id: t.id, message: "İşlemi silmek istiyor musunuz?", onConfirm: () => deleteTransaction(t.id) });
-                      }} className="w-full p-3 text-left text-[11px] font-bold text-rose-500 flex items-center gap-2 active:bg-rose-50"><Icon name="trash" size={14}/> Sil</button>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))
+              }
             </div>
           )}
         </main>
 
-        <nav className="bg-white border-t border-slate-100 flex justify-around items-center px-2 z-50 shadow-lg shrink-0">
-          {[{id:'home', i:'layout-dashboard'}, {id:'stock', i:'package'}, {id:'vets', i:'users'}, {id:'history', i:'clipboard-list'}].map(t => (
-            <button key={t.id} onClick={() => {setActiveTab(t.id); setSelectedVetId(null); setSelectedProductId(null);}} className={`p-4 transition-all ${activeTab === t.id && !selectedVetId && !selectedProductId ? 'tab-active' : 'text-slate-300'}`}>
-              <Icon name={t.i} size={24} />
-            </button>
+        <nav className="bg-white border-t border-slate-100 flex justify-around items-center px-4 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] shrink-0">
+          {[{id:'home', i:'layout-grid'}, {id:'stock', i:'box'}, {id:'vets', i:'users'}, {id:'history', i:'calendar'}].map(t => (
+            <button key={t.id} onClick={() => {setActiveTab(t.id); setSelectedVetId(null); setSelectedProductId(null);}} className={`p-5 transition-all ${activeTab === t.id && !selectedVetId && !selectedProductId ? 'tab-active' : 'text-slate-300'}`}><Icon name={t.i} size={26} /></button>
           ))}
         </nav>
 
-        {/* ONAY MODALI */}
+        {/* MODALLAR */}
         {confirmDelete.open && (
-          <div className="fixed inset-0 bg-slate-900/60 z-[200] flex items-center justify-center p-6 backdrop-blur-sm animate-in text-left">
-            <div className="bg-white w-full rounded-2xl p-6 shadow-2xl max-w-sm">
-              <div className={`w-12 h-12 ${confirmDelete.type === 'alert' ? 'bg-amber-50 text-amber-500' : 'bg-rose-50 text-rose-500'} rounded-full flex items-center justify-center mb-4 mx-auto`}>
-                <Icon name={confirmDelete.type === 'alert' ? "alert-circle" : "alert-triangle"} size={28} />
-              </div>
-              <h3 className="text-center font-black text-slate-800 mb-2">{confirmDelete.type === 'alert' ? 'Bilgi' : 'Onay'}</h3>
-              <p className="text-center text-slate-500 text-xs leading-relaxed mb-6">{confirmDelete.message}</p>
+          <div className="fixed inset-0 bg-slate-900/60 z-[200] flex items-center justify-center p-8 backdrop-blur-sm animate-in">
+            <div className="bg-white w-full rounded-3xl p-8 shadow-2xl max-sm:w-[90%] text-center">
+              <div className={`w-16 h-16 ${confirmDelete.type === 'alert' ? 'bg-amber-50 text-amber-500' : 'bg-rose-50 text-rose-500'} rounded-[2rem] flex items-center justify-center mb-5 mx-auto`}><Icon name={confirmDelete.type === 'alert' ? "info" : "alert-circle"} size={32} /></div>
+              <h3 className="font-black text-slate-800 mb-2 text-lg uppercase tracking-tight">{confirmDelete.type === 'alert' ? 'BİLGİ' : 'DİKKAT'}</h3>
+              <p className="text-slate-500 text-sm leading-relaxed mb-8">{confirmDelete.message}</p>
               <div className="flex gap-3">
-                <button onClick={() => setConfirmDelete({ open: false })} className="flex-1 py-3 bg-slate-100 rounded-xl font-bold text-slate-500 text-xs uppercase">Tamam</button>
-                {confirmDelete.type !== 'alert' && (
-                  <button onClick={() => { confirmDelete.onConfirm(); setConfirmDelete({ open: false }); }} className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-black text-xs uppercase">SİL</button>
-                )}
+                <button onClick={() => setConfirmDelete({ open: false })} className="flex-1 py-4 bg-slate-100 rounded-2xl font-bold text-slate-500 text-sm active:bg-slate-200 transition-colors">Vazgeç</button>
+                {confirmDelete.type !== 'alert' && <button onClick={() => { confirmDelete.onConfirm(); setConfirmDelete({ open: false }); }} className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-black text-sm uppercase shadow-lg shadow-rose-200 active:scale-95 transition-all">SİL</button>}
               </div>
             </div>
           </div>
         )}
 
-        {/* DÜZENLEME MODALLARI */}
-        {editingVetId && (
-          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-5 backdrop-blur-sm text-left">
-            <div className="bg-white w-full rounded-2xl p-6 animate-in shadow-2xl">
-              <h3 className="font-black text-slate-800 mb-4 text-sm uppercase">Müşteri Düzenle</h3>
-              <input value={editVetName} onChange={e => setEditVetName(e.target.value)} className="w-full p-3 bg-slate-100 rounded-xl mb-2 font-bold text-sm outline-none uppercase" placeholder="İsim" />
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                <input value={editVetPhone} onChange={e => setEditVetPhone(e.target.value)} className="p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none" placeholder="Telefon" />
-                <input type="number" value={editVetLimit} onChange={e => setEditVetLimit(e.target.value)} className="p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none" placeholder="Limit" />
+        {/* BOTTOM SHEET FOR ADD TRANSACTION */}
+        {showAddForm && (
+          <div className="fixed inset-0 bg-slate-900/40 z-[100] flex items-end backdrop-blur-[2px]">
+            <div className="bg-white w-full rounded-t-[2.5rem] p-7 shadow-[0_-10px_40px_rgba(0,0,0,0.1)] bottom-sheet max-h-[95dvh] overflow-y-auto">
+              <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-8"></div>
+              <h3 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tight text-left">{editingTransId ? 'İşlemi Düzenle' : 'Yeni Cari İşlem'}</h3>
+              <div className="space-y-5 text-left">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-widest">TARİH</label>
+                    <input type="date" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs outline-none border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all" value={formDate} onChange={e => setFormDate(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-widest">İŞLEM TÜRÜ</label>
+                    <div className="relative">
+                        <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs outline-none border border-slate-100 text-indigo-600 uppercase focus:bg-white focus:border-indigo-200 transition-all" value={formType} onChange={e => setFormType(e.target.value)}>
+                            <option value="borclanma">BORÇ (-)</option>
+                            <option value="odeme">BORÇ (+)</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40"><Icon name="chevron-down" size={14}/></div>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-widest">VETERİNER</label>
+                  <div className="relative">
+                    <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs outline-none border border-slate-100 uppercase focus:bg-white focus:border-indigo-200 transition-all" value={formVetId} onChange={e => setFormVetId(e.target.value)}>
+                        <option value="">Seçiniz</option>
+                        {sortedVets.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40"><Icon name="chevron-down" size={14}/></div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-widest">BOĞA</label>
+                    <div className="relative">
+                        <select className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs outline-none border border-slate-100 uppercase focus:bg-white focus:border-indigo-200 transition-all" value={formProduct} onChange={e => setFormProduct(e.target.value)}>
+                            <option value="">Seçiniz</option>
+                            {sortedProductsList.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40"><Icon name="chevron-down" size={14}/></div>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-widest">ADET / MİKTAR</label>
+                    <input type="number" inputMode="numeric" className="w-full p-4 bg-slate-50 rounded-2xl font-bold text-xs outline-none border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all" placeholder="0" value={formQty} onChange={e => setFormQty(e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex gap-4 pt-6">
+                  <button onClick={() => { setShowAddForm(false); setEditingTransId(null); }} className="flex-1 p-5 bg-slate-100 rounded-3xl font-bold text-slate-400 text-sm uppercase btn-touch">İptal</button>
+                  <button onClick={handleTransaction} className="flex-1 p-5 bg-indigo-600 text-white rounded-3xl font-black text-sm uppercase shadow-lg shadow-indigo-200 active:scale-95 transition-all btn-touch">{editingTransId ? 'GÜNCELLE' : 'TAMAMLA'}</button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => setEditingVetId(null)} className="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-xs text-slate-400 uppercase">İptal</button>
+            </div>
+          </div>
+        )}
+
+        {/* QUICK ADD MODAL */}
+        {showQuickAdd && (
+          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-8 backdrop-blur-sm">
+            <div className="bg-white w-full rounded-3xl p-7 animate-in shadow-2xl text-left max-w-sm max-sm:w-[90%]">
+              <h3 className="font-black text-slate-800 mb-6 text-sm uppercase tracking-widest">{showQuickAdd === 'vet' ? 'YENİ VETERİNER' : 'YENİ BOĞA'}</h3>
+              <input autoFocus placeholder="Adı yazınız..." value={newNameInput} onChange={e => setNewNameInput(e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl mb-6 font-bold text-sm outline-none uppercase border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all shadow-inner" />
+              <div className="flex gap-3">
+                <button onClick={() => {setShowQuickAdd(null); setNewNameInput('');}} className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-xs text-slate-400">Vazgeç</button>
                 <button onClick={() => {
-                  setVets(vets.map(v => v.id === editingVetId ? { ...v, name: normalizeName(editVetName), phone: editVetPhone, limit: Number(editVetLimit) } : v));
+                  const n = normalizeName(newNameInput); if(!n) return;
+                  
+                  // HATA DÜZELTME: Mükerrer kayıt kontrolü
+                  if (showQuickAdd === 'vet') {
+                    if (vets.some(v => v.name === n)) {
+                      setConfirmDelete({ open: true, type: 'alert', message: "Bu isimde bir veteriner zaten var!" });
+                      return;
+                    }
+                    setVets([...vets, { id:uid(), name:n, phone:'' }]);
+                  } else {
+                    if (products.some(p => p.name === n)) {
+                      setConfirmDelete({ open: true, type: 'alert', message: "Bu isimde bir boğa zaten var!" });
+                      return;
+                    }
+                    setProducts([...products, { id:uid(), name:n, stock:0 }]);
+                  }
+                  
+                  setShowQuickAdd(null); setNewNameInput('');
+                }} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-lg active:scale-95 transition-all">EKLE</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* EDIT MODALS */}
+        {editingVetId && (
+          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-8 backdrop-blur-sm">
+            <div className="bg-white w-full rounded-3xl p-7 animate-in shadow-2xl text-left max-w-sm max-sm:w-[90%]">
+              <h3 className="font-black text-slate-800 mb-5 text-sm uppercase tracking-widest">VETERİNER DÜZENLE</h3>
+              <div className="space-y-3">
+                <input value={editVetName} onChange={e => setEditVetName(e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-bold text-sm outline-none uppercase border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all shadow-inner" placeholder="İsim" />
+                <input value={editVetPhone} onChange={e => setEditVetPhone(e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl font-bold text-xs outline-none border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all shadow-inner" placeholder="Telefon (Opsiyonel)" />
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setEditingVetId(null)} className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-xs text-slate-400">İptal</button>
+                <button onClick={() => {
+                  const n = normalizeName(editVetName);
+                  if (vets.some(v => v.id !== editingVetId && v.name === n)) {
+                    setConfirmDelete({ open: true, type: 'alert', message: "Bu isimde başka bir veteriner var!" });
+                    return;
+                  }
+                  setVets(vets.map(v => v.id === editingVetId ? { ...v, name: n, phone: editVetPhone } : v));
                   setEditingVetId(null);
-                }} className="flex-1 p-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase">KAYDET</button>
+                }} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase active:scale-95 shadow-lg transition-all">KAYDET</button>
               </div>
             </div>
           </div>
         )}
 
         {editingProductId && (
-          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-5 backdrop-blur-sm text-left">
-            <div className="bg-white w-full rounded-2xl p-6 animate-in shadow-2xl">
-              <h3 className="font-black text-slate-800 mb-4 text-sm uppercase">Ürün Düzenle</h3>
-              <input value={editProductName} onChange={e => setEditProductName(e.target.value)} className="w-full p-3 bg-slate-100 rounded-xl mb-3 font-bold text-sm outline-none uppercase" placeholder="Ürün Adı" />
-              <div className="flex gap-2">
-                <button onClick={() => setEditingProductId(null)} className="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-xs text-slate-400 uppercase">İptal</button>
+          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-8 backdrop-blur-sm">
+            <div className="bg-white w-full rounded-3xl p-7 animate-in shadow-2xl text-left max-sm:w-[90%] max-w-sm">
+              <h3 className="font-black text-slate-800 mb-5 text-sm uppercase tracking-widest">BOĞA DÜZENLE</h3>
+              <input value={editProductName} onChange={e => setEditProductName(e.target.value)} className="w-full p-4 bg-slate-100 rounded-2xl mb-6 font-bold text-sm outline-none uppercase border border-slate-100 focus:bg-white focus:border-indigo-200 transition-all shadow-inner" placeholder="Boğa Adı" />
+              <div className="flex gap-3">
+                <button onClick={() => setEditingProductId(null)} className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-xs text-slate-400">İptal</button>
                 <button onClick={() => {
                   const oldName = products.find(p => p.id === editingProductId).name;
                   const newName = normalizeName(editProductName);
+                  if (products.some(p => p.id !== editingProductId && p.name === newName)) {
+                    setConfirmDelete({ open: true, type: 'alert', message: "Bu isimde başka bir boğa var!" });
+                    return;
+                  }
                   setProducts(products.map(p => p.id === editingProductId ? { ...p, name: newName } : p));
                   setTransactions(transactions.map(t => t.product === oldName ? { ...t, product: newName } : t));
                   setEditingProductId(null);
-                }} className="flex-1 p-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase">KAYDET</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showQuickAdd && (
-          <div className="fixed inset-0 bg-slate-900/60 z-[150] flex items-center justify-center p-5 backdrop-blur-sm text-left">
-            <div className="bg-white w-full rounded-2xl p-6 animate-in shadow-2xl">
-              <h3 className="font-black text-slate-800 mb-4 text-sm uppercase">{showQuickAdd === 'vet' ? 'Yeni Müşteri' : 'Yeni Ürün'}</h3>
-              <input autoFocus placeholder="Adı giriniz..." value={newNameInput} onChange={e => setNewNameInput(e.target.value)} className="w-full p-3 bg-slate-100 rounded-xl mb-3 font-bold text-sm outline-none uppercase" />
-              <div className="flex gap-2">
-                <button onClick={() => setShowQuickAdd(null)} className="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-xs text-slate-400 uppercase">İptal</button>
-                <button onClick={() => {
-                  const n = normalizeName(newNameInput); if(!n) return;
-                  if(showQuickAdd === 'vet') setVets([...vets, { id:uid(), name:n, phone:'', limit:0 }]);
-                  else setProducts([...products, { id:uid(), name:n, stock:0 }]);
-                  setShowQuickAdd(null); setNewNameInput('');
-                }} className="flex-1 p-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase text-center">EKLE</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showAddForm && (
-          <div className="fixed inset-0 bg-slate-900/60 z-[100] flex items-end backdrop-blur-sm text-left">
-            <div className="bg-white w-full rounded-t-3xl p-6 shadow-2xl animate-in slide-in-from-bottom max-h-[90dvh] overflow-y-auto">
-              <h3 className="text-lg font-black text-slate-800 mb-5 uppercase tracking-tighter">{editingTransId ? 'İşlemi Güncelle' : 'Cari İşlem Gir'}</h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Tarih</label>
-                    <input type="date" className="w-full p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none" value={formDate} onChange={e => setFormDate(e.target.value)} />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Tür</label>
-                    <select className="w-full p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none text-indigo-600 uppercase" value={formType} onChange={e => setFormType(e.target.value)}>
-                        <option value="odeme">BORÇ (-)</option>
-                        <option value="borclanma">BORÇ (+)</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Müşteri Seçin</label>
-                  <select className="w-full p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none uppercase" value={formVetId} onChange={e => setFormVetId(e.target.value)}>
-                    <option value="">Seçiniz</option>
-                    {sortedVets.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Ürün Seçin</label>
-                    <select className="w-full p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none uppercase" value={formProduct} onChange={e => setFormProduct(e.target.value)}>
-                        <option value="">Seçiniz</option>
-                        {sortedProductsList.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Miktar</label>
-                    <input type="number" className="w-full p-3 bg-slate-100 rounded-xl font-bold text-xs outline-none" placeholder="0" value={formQty} onChange={e => setFormQty(e.target.value)} />
-                  </div>
-                </div>
-                <div className="flex gap-3 pt-4">
-                  <button onClick={() => { setShowAddForm(false); setEditingTransId(null); }} className="flex-1 p-4 bg-slate-100 rounded-2xl font-bold text-slate-400 text-sm uppercase">İptal</button>
-                  <button onClick={handleTransaction} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-black text-sm uppercase">{editingTransId ? 'Güncelle' : 'Tamamla'}</button>
-                </div>
+                }} className="flex-1 p-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase active:scale-95 shadow-lg transition-all">KAYDET</button>
               </div>
             </div>
           </div>
